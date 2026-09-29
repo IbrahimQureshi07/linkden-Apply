@@ -1,0 +1,18 @@
+.env
+backend/.env
+*.db
+data/
+backend/data/
+credentials/
+backend/credentials/
+uploads/
+backend/uploads/
+__pycache__/
+*.pyc
+.venv/
+.venv312/
+venv/
+.streamlit/
+# Google service account downloads (never commit)
+*service-account*.json
+linkden-apply-*.json

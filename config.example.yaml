@@ -1,0 +1,17 @@
+default_country: PK
+locations:
+  - Pakistan
+  - Karachi
+  - Lahore
+  - Islamabad
+  - Remote
+remote: true
+jobs:
+  max_queries: 8
+  results_per_query: 15
+  max_jobs_to_score: 80
+  min_match_score_export: 0
+matching:
+  openai_model: gpt-4o-mini
+profile:
+  openai_model: gpt-4o-mini
