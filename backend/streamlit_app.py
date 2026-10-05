@@ -1,14 +1,74 @@
-"""Minimal UI for Stage 1 personal testing."""
+"""Minimal UI for Stage 1 personal testing (local + Streamlit Cloud)."""
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 
-import streamlit as st
+# Ensure `backend/` is on path so `import app` works on Streamlit Cloud (cwd = repo root).
+_BACKEND_ROOT = Path(__file__).resolve().parent
+if str(_BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_ROOT))
+
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parent / ".env")
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+load_dotenv(_BACKEND_ROOT / ".env")
+load_dotenv(_BACKEND_ROOT.parent / ".env")
+
+
+def _apply_streamlit_secrets() -> None:
+    """Map Streamlit Cloud secrets → environment before app settings load."""
+    try:
+        import streamlit as st
+
+        secrets = st.secrets
+    except Exception:
+        return
+
+    def _set(key: str, value: object) -> None:
+        if value is None:
+            return
+        text = str(value).strip()
+        if not text:
+            return
+        if not os.environ.get(key):
+            os.environ[key] = text
+
+    flat_keys = (
+        "OPENAI_API_KEY",
+        "RAPIDAPI_KEY",
+        "RAPIDAPI_HOST",
+        "CONFIG_PATH",
+        "DATABASE_URL",
+        "GOOGLE_SHEET_ID",
+        "GOOGLE_SHEET_TITLE",
+        "GOOGLE_SERVICE_ACCOUNT_JSON",
+        "GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT",
+    )
+    for key in flat_keys:
+        if key in secrets:
+            val = secrets[key]
+            if hasattr(val, "keys"):  # AttrDict / mapping = full SA JSON object
+                import json
+
+                _set("GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT", json.dumps(dict(val)))
+            else:
+                _set(key, val)
+
+    # Convenience: nested table [google_service_account]
+    if "google_service_account" in secrets:
+        import json
+
+        _set(
+            "GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT",
+            json.dumps(dict(secrets["google_service_account"])),
+        )
+
+
+_apply_streamlit_secrets()
+
+import streamlit as st
 
 from app.db.database import SessionLocal, init_db
 from app.models.schemas import CandidateProfile, Stage1RunRequest

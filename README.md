@@ -92,19 +92,43 @@ Add a filter in Sheets: **match_score ≥ 70**.
 
 Edit `config.yaml` `locations` or pass CLI `--location` / Streamlit locations field — no code changes.
 
+## Streamlit Cloud deploy
+
+1. Push this repo to GitHub (do **not** commit `.env` or service-account JSON files).
+2. [share.streamlit.io](https://share.streamlit.io) → **New app**
+3. Settings:
+   - **Main file path:** `backend/streamlit_app.py`
+   - Python: uses `runtime.txt` → **3.12**
+   - Root `requirements.txt` is used for installs (Streamlit itself is provided by Cloud)
+4. **Advanced settings → Secrets** — paste from [`.streamlit/secrets.toml.example`](.streamlit/secrets.toml.example):
+   - `OPENAI_API_KEY`
+   - `RAPIDAPI_KEY`
+   - `GOOGLE_SHEET_ID` (sheet shared Editor with service account email)
+   - `GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT` = full JSON as multiline string
+   - `CONFIG_PATH = "../config.yaml"`
+5. Deploy / reboot the app.
+
+If install fails, open **Manage app** → terminal logs, fix `requirements.txt`, push, reboot.
+
 ## Project layout
 
 ```
 backend/app/          FastAPI, pipeline, providers
+backend/streamlit_app.py   UI (local + Cloud entry)
+requirements.txt      Streamlit Cloud deps (repo root)
+runtime.txt           python-3.12
 config.yaml           Default Pakistan-focused search
 .env.example          Environment template
+.streamlit/secrets.toml.example   Cloud secrets template
 ```
 
 ## Troubleshooting
 
 | Issue | Fix |
 |-------|-----|
-| `OPENAI_API_KEY is not set` | Fill `backend/.env` |
+| `OPENAI_API_KEY is not set` | Fill `backend/.env` or Streamlit Secrets |
 | `RAPIDAPI_KEY is not set` | Subscribe to JSearch on RapidAPI |
-| Google export failed | Service account JSON path + share sheet with SA email |
+| Google export failed | Service account JSON / `GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT` + share sheet with SA email |
 | Empty job list | Try broader titles in CV; check RapidAPI quota |
+| Cloud: `Error installing requirements` | Ensure root `requirements.txt` exists; do not pin `streamlit` there |
+| Cloud: `No module named app` | Main file must be `backend/streamlit_app.py` (path bootstrap included) |

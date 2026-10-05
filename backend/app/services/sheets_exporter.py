@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from google.oauth2 import service_account
@@ -27,16 +28,34 @@ SHEET_HEADERS = [
 ]
 
 
-def _credentials():
-    settings = get_settings()
+def _resolve_service_account_file(settings) -> Path:
+    """Local file path, or materialize JSON from Cloud secret env."""
     path = Path(settings.google_service_account_json)
     if not path.is_absolute():
         path = settings.backend_root / path
+
+    content = (os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT") or "").strip()
+    if not content and settings.google_service_account_json.strip().startswith("{"):
+        content = settings.google_service_account_json.strip()
+
+    if content.startswith("{"):
+        path = settings.backend_root / "credentials" / "cloud-service-account.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return path
+
     if not path.exists():
         raise ValueError(
             f"Google service account JSON not found at {path}. "
-            "See README for setup."
+            "For Streamlit Cloud, set GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT in Secrets. "
+            "See .streamlit/secrets.toml.example"
         )
+    return path
+
+
+def _credentials():
+    settings = get_settings()
+    path = _resolve_service_account_file(settings)
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     return service_account.Credentials.from_service_account_file(str(path), scopes=scopes)
 

@@ -12,7 +12,7 @@ __pycache__/
 .venv/
 .venv312/
 venv/
-.streamlit/
+.streamlit/secrets.toml
 # Google service account downloads (never commit)
 *service-account*.json
 linkden-apply-*.json

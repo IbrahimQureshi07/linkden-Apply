@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     rapidapi_key: str = ""
     rapidapi_host: str = "jsearch.p.rapidapi.com"
     database_url: str = "sqlite:///./data/stage1.db"
-    config_path: str = "../config.example.yaml"
+    config_path: str = "../config.yaml"
     google_service_account_json: str = "./credentials/google-service-account.json"
     google_sheet_id: str = ""
     google_sheet_title: str = "Job Pipeline"
