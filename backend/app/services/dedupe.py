@@ -6,6 +6,10 @@ from urllib.parse import parse_qs, urlparse, urlunparse
 from app.models.schemas import JobListing
 
 
+def normalize_job_url(url: str) -> str:
+    return _normalize_url(url)
+
+
 def _normalize_url(url: str) -> str:
     parsed = urlparse(url.strip().lower())
     netloc = parsed.netloc.replace("www.", "")

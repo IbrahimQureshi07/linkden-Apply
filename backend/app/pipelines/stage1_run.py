@@ -12,7 +12,9 @@ from app.db.models import JobRecord, RunRecord
 from app.models.schemas import Stage1RunRequest, Stage1RunResult
 from app.services.cv_parser import extract_text_from_bytes
 from app.services.dedupe import dedupe_jobs
+from app.services.export_dedupe import filter_new_jobs_for_export
 from app.services.job_providers.jsearch import JSearchProvider
+from app.services.location_filter import filter_jobs_by_locations
 from app.services.matcher import match_jobs
 from app.services.profile_extractor import extract_profile
 from app.services.query_generator import generate_search_queries
@@ -51,7 +53,6 @@ async def run_stage1_pipeline(
 
         provider = JSearchProvider()
         all_jobs = []
-        # Search primary location + optional city variants (cap API calls)
         search_locations = locations[:3] if len(locations) > 3 else locations
 
         for query in queries:
@@ -62,14 +63,18 @@ async def run_stage1_pipeline(
 
         deduped = dedupe_jobs(all_jobs)
         matched = match_jobs(profile, deduped)
-        filtered = [j for j in matched if j.match_score >= min_score]
+        scored = [j for j in matched if j.match_score >= min_score]
+        location_filtered = filter_jobs_by_locations(scored, locations)
+        skipped_location = len(scored) - len(location_filtered)
+        to_export, skipped_dupes = filter_new_jobs_for_export(location_filtered, db)
 
         sheet_id: str | None = None
         sheet_url: str | None = None
-        if filtered:
+        sheet_fail_reason: str | None = None
+        if to_export:
             try:
                 sheet_id, sheet_url = export_jobs_to_sheet(
-                    filtered,
+                    to_export,
                     run_id,
                     sheet_title_suffix=run_id[:8],
                 )
@@ -77,36 +82,49 @@ async def run_stage1_pipeline(
                 sheet_id = None
                 sheet_url = None
                 sheet_fail_reason = str(exc)
-            else:
-                sheet_fail_reason = None
-        else:
-            sheet_fail_reason = None
 
-        message = "Stage 1 completed successfully."
-        if not filtered:
-            message = "No jobs met the match score threshold."
-        elif not sheet_url and sheet_fail_reason:
-            message = f"Jobs matched but Google Sheet export failed: {sheet_fail_reason}"
-        elif not sheet_url:
-            message = "Jobs matched; configure Google Sheets to export."
-
-        for job in filtered:
-            db.add(
-                JobRecord(
-                    run_id=run_id,
-                    job_id=job.job_id,
-                    job_url=job.job_url,
-                    title=job.job_title,
-                    company=job.company,
-                    match_score=job.match_score,
-                    payload_json=job.model_dump_json(),
+        # Only remember jobs that actually made it to the sheet (for across-run dedupe)
+        if sheet_url and to_export:
+            for job in to_export:
+                db.add(
+                    JobRecord(
+                        run_id=run_id,
+                        job_id=job.job_id,
+                        job_url=job.job_url,
+                        title=job.job_title,
+                        company=job.company,
+                        match_score=job.match_score,
+                        payload_json=job.model_dump_json(),
+                    )
                 )
+
+        parts: list[str] = []
+        if sheet_url:
+            parts.append(
+                f"Stage 1 OK — exported {len(to_export)} new job(s) to Google Sheet."
             )
+        elif not location_filtered:
+            parts.append("No jobs left after match-score + strict location filters.")
+        elif not to_export:
+            parts.append(
+                "No new jobs to export — all matches were already sent in a previous run."
+            )
+        elif sheet_fail_reason:
+            parts.append(f"Jobs ready but Google Sheet export failed: {sheet_fail_reason}")
+        else:
+            parts.append("Jobs matched; configure Google Sheets to export.")
+
+        if skipped_location:
+            parts.append(f"Skipped {skipped_location} (outside selected location).")
+        if skipped_dupes:
+            parts.append(f"Skipped {skipped_dupes} (already exported earlier).")
+
+        message = " ".join(parts)
 
         result = Stage1RunResult(
             run_id=run_id,
             jobs_found=len(deduped),
-            jobs_exported=len(filtered),
+            jobs_exported=len(to_export) if sheet_url else 0,
             sheet_url=sheet_url,
             sheet_id=sheet_id,
             profile=profile,

@@ -13,5 +13,6 @@ jobs:
   min_match_score_export: 0
 matching:
   openai_model: gpt-4o-mini
+  batch_size: 15
 profile:
   openai_model: gpt-4o-mini

@@ -13,6 +13,12 @@ from app.models.schemas import (
     MatchedJob,
 )
 
+_SYSTEM = (
+    "Score each job 0-100 for fit with the candidate for applying. "
+    "Be realistic for Pakistan / remote roles. "
+    "Return every job_id from the input. Keep match_reason under 12 words."
+)
+
 
 def _keyword_prefilter(profile: CandidateProfile, jobs: list[JobListing], limit: int) -> list[JobListing]:
     tokens = set()
@@ -29,6 +35,61 @@ def _keyword_prefilter(profile: CandidateProfile, jobs: list[JobListing], limit:
     return ranked[:limit]
 
 
+def _chunks(items: list[JobListing], size: int) -> list[list[JobListing]]:
+    if size < 1:
+        size = 15
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+def _score_batch(
+    client: OpenAI,
+    model: str,
+    profile: CandidateProfile,
+    batch: list[JobListing],
+) -> dict[str, MatchBatchItem]:
+    job_payload = [
+        {
+            "job_id": j.job_id,
+            "job_title": j.job_title,
+            "company": j.company,
+            "location": j.location,
+            "source": j.source,
+            "snippet": (j.description_snippet or "")[:200],
+        }
+        for j in batch
+    ]
+    # Compact profile for each batch (avoid huge repeated payloads)
+    profile_compact = {
+        "headline": profile.headline,
+        "skills": profile.skills[:20],
+        "job_titles": profile.job_titles[:10],
+        "seniority": profile.seniority,
+        "years_experience": profile.years_experience,
+        "keywords": profile.keywords[:15],
+    }
+
+    completion = client.beta.chat.completions.parse(
+        model=model,
+        messages=[
+            {"role": "system", "content": _SYSTEM},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {"profile": profile_compact, "jobs": job_payload},
+                    ensure_ascii=False,
+                ),
+            },
+        ],
+        response_format=MatchBatchResult,
+        temperature=0.2,
+        max_tokens=4096,
+    )
+    parsed = completion.choices[0].message.parsed
+    if not parsed:
+        return {}
+    return {m.job_id: m for m in parsed.matches}
+
+
 def match_jobs(
     profile: CandidateProfile,
     jobs: list[JobListing],
@@ -36,7 +97,10 @@ def match_jobs(
 ) -> list[MatchedJob]:
     settings = get_settings()
     yaml_cfg = load_yaml_config(settings)
-    cap = max_to_score or yaml_cfg.get("jobs", {}).get("max_jobs_to_score", 80)
+    jobs_cfg = yaml_cfg.get("jobs", {})
+    matching_cfg = yaml_cfg.get("matching", {})
+    cap = max_to_score or jobs_cfg.get("max_jobs_to_score", 80)
+    batch_size = int(matching_cfg.get("batch_size", 15))
 
     subset = _keyword_prefilter(profile, jobs, cap)
     if not subset:
@@ -48,46 +112,16 @@ def match_jobs(
             for j in subset
         ]
 
-    model = yaml_cfg.get("matching", {}).get("openai_model", "gpt-4o-mini")
+    model = matching_cfg.get("openai_model", "gpt-4o-mini")
     client = OpenAI(api_key=settings.openai_api_key)
 
-    job_payload = [
-        {
-            "job_id": j.job_id,
-            "job_title": j.job_title,
-            "company": j.company,
-            "location": j.location,
-            "source": j.source,
-            "snippet": (j.description_snippet or "")[:400],
-        }
-        for j in subset
-    ]
-
-    completion = client.beta.chat.completions.parse(
-        model=model,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Score each job 0-100 for fit with the candidate profile for applying. "
-                    "Be realistic for Pakistan / remote roles. One short reason per job."
-                ),
-            },
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {"profile": profile.model_dump(), "jobs": job_payload},
-                    ensure_ascii=False,
-                )[:100000],
-            },
-        ],
-        response_format=MatchBatchResult,
-        temperature=0.2,
-    )
-    parsed = completion.choices[0].message.parsed
     scores: dict[str, MatchBatchItem] = {}
-    if parsed:
-        scores = {m.job_id: m for m in parsed.matches}
+    for batch in _chunks(subset, batch_size):
+        try:
+            scores.update(_score_batch(client, model, profile, batch))
+        except Exception:
+            # Soft-fail one batch; remaining batches still score
+            continue
 
     matched: list[MatchedJob] = []
     for job in subset:
